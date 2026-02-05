@@ -331,8 +331,8 @@ func resourceVcdNsxtFirewallRuleImport(ctx context.Context, d *schema.ResourceDa
 			return nil, fmt.Errorf("could not find firewall rule with name '%s' in edge gateway '%s'", ruleName, edgeName)
 		}
 
-		d.Set("org", orgName)
-		d.Set("edge_gateway_id", edge.EdgeGateway.ID)
+		dSet(d, "org", orgName)
+		dSet(d, "edge_gateway_id", edge.EdgeGateway.ID)
 		d.SetId(foundRule.ID)
 
 		return []*schema.ResourceData{d}, nil
@@ -342,7 +342,7 @@ func resourceVcdNsxtFirewallRuleImport(ctx context.Context, d *schema.ResourceDa
 		return nil, fmt.Errorf("import ID must be in format 'edge_gateway_id.rule_id' or 'org.edge_name.rule_name'")
 	}
 
-	d.Set("edge_gateway_id", parts[0])
+	dSet(d, "edge_gateway_id", parts[0])
 	d.SetId(parts[1])
 
 	return []*schema.ResourceData{d}, nil
@@ -378,14 +378,20 @@ func getNsxtFirewallRuleFromSchema(d *schema.ResourceData) *NsxtFirewallRuleV2 {
 }
 
 func setNsxtFirewallRuleToSchema(d *schema.ResourceData, rule *NsxtFirewallRuleV2) {
-	d.Set("name", rule.Name)
-	d.Set("action", rule.ActionValue)
-	d.Set("enabled", rule.Active)
-	d.Set("logging", rule.Logging)
-	d.Set("direction", rule.Direction)
-	d.Set("ip_protocol", rule.IpProtocol)
+	dSet(d, "name", rule.Name)
+	dSet(d, "action", rule.ActionValue)
+	dSet(d, "enabled", rule.Active)
+	dSet(d, "logging", rule.Logging)
+	dSet(d, "direction", rule.Direction)
+	dSet(d, "ip_protocol", rule.IpProtocol)
 
-	d.Set("source_ids", convertStringsToTypeSet(extractIdsFromOpenApiReferences(rule.SourceFirewallGroups)))
-	d.Set("destination_ids", convertStringsToTypeSet(extractIdsFromOpenApiReferences(rule.DestinationFirewallGroups)))
-	d.Set("app_port_profile_ids", convertStringsToTypeSet(extractIdsFromOpenApiReferences(rule.ApplicationPortProfiles)))
+	if err := d.Set("source_ids", convertStringsToTypeSet(extractIdsFromOpenApiReferences(rule.SourceFirewallGroups))); err != nil {
+		fmt.Printf("error setting source_ids in schema: %s", err)
+	}
+	if err := d.Set("destination_ids", convertStringsToTypeSet(extractIdsFromOpenApiReferences(rule.DestinationFirewallGroups))); err != nil {
+		fmt.Printf("error setting destination_ids in schema: %s", err)
+	}
+	if err := d.Set("app_port_profile_ids", convertStringsToTypeSet(extractIdsFromOpenApiReferences(rule.ApplicationPortProfiles))); err != nil {
+		fmt.Printf("error setting app_port_profile_ids in schema: %s", err)
+	}
 }
