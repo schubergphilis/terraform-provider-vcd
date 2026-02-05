@@ -18,7 +18,6 @@ func TestAccVcdNsxtFirewallRule_Basic(t *testing.T) {
 
 	resource.Test(t, resource.TestCase{
 		ProviderFactories: testAccProviders,
-		PreCheck:          func() { testAccPreCheck(t) },
 		CheckDestroy:      testAccCheckVcdNsxtFirewallRuleDestroy,
 		Steps: []resource.TestStep{
 			{
@@ -60,7 +59,6 @@ func TestAccVcdNsxtFirewallRule_Complete(t *testing.T) {
 
 	resource.Test(t, resource.TestCase{
 		ProviderFactories: testAccProviders,
-		PreCheck:          func() { testAccPreCheck(t) },
 		CheckDestroy:      testAccCheckVcdNsxtFirewallRuleDestroy,
 		Steps: []resource.TestStep{
 			{
