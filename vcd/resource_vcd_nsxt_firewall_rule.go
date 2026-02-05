@@ -159,6 +159,13 @@ func resourceVcdNsxtFirewallRuleCreate(ctx context.Context, d *schema.ResourceDa
 		return diag.Errorf("error retrieving Edge Gateway: %s", err)
 	}
 
+	unlock, err := vcdClient.lockParentVdcGroupOrEdgeGateway(d)
+	if err != nil {
+		return diag.Errorf("[edge firewall rule create] %s", err)
+	}
+
+	defer unlock()
+
 	rule := getNsxtFirewallRuleFromSchema(d)
 
 	endpoint, err := vcdClient.Client.OpenApiBuildEndpoint(fmt.Sprintf("%sedgeGateways/%s/firewall/rules/", types.OpenApiPathVersion2_0_0, edgeGatewayId))
@@ -228,6 +235,14 @@ func resourceVcdNsxtFirewallRuleUpdate(ctx context.Context, d *schema.ResourceDa
 	if err != nil {
 		return diag.Errorf("error retrieving Edge Gateway: %s", err)
 	}
+
+	unlock, err := vcdClient.lockParentVdcGroupOrEdgeGateway(d)
+	if err != nil {
+		return diag.Errorf("[edge firewall rule update] %s", err)
+	}
+
+	defer unlock()
+
 	rule := getNsxtFirewallRuleFromSchema(d)
 	rule.ID = ruleId
 
@@ -268,6 +283,13 @@ func resourceVcdNsxtFirewallRuleDelete(_ context.Context, d *schema.ResourceData
 		}
 		return diag.Errorf("error retrieving Edge Gateway: %s", err)
 	}
+
+	unlock, err := vcdClient.lockParentVdcGroupOrEdgeGateway(d)
+	if err != nil {
+		return diag.Errorf("[edge firewall rule delete] %s", err)
+	}
+
+	defer unlock()
 
 	endpoint, err := vcdClient.Client.OpenApiBuildEndpoint(fmt.Sprintf("%sedgeGateways/%s/firewall/rules/%s", types.OpenApiPathVersion2_0_0, edgeGatewayId, ruleId))
 	minimumApiVersion := "39.1"
