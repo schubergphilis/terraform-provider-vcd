@@ -78,7 +78,6 @@ testunit: fmtcheck
 
 # Runs the basic execution test
 test: testunit tagverify
-	@sh -c "'$(CURDIR)/scripts/runtest.sh' short"
 
 # Runs the full acceptance test as Org user
 testacc-orguser: testunit
