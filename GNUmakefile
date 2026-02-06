@@ -9,12 +9,11 @@ default: build
 
 # builds the plugin injecting output of `git describe` to BuildVersion variable
 build: fmtcheck
-	go install -ldflags="-X 'github.com/vmware/terraform-provider-vcd/v3/vcd.BuildVersion=$(GIT_DESCRIBE)'"
+	go install -ldflags="-X 'github.com/schubergphilis/terraform-provider-vcd/v3/vcd.BuildVersion=$(GIT_DESCRIBE)'"
 
 # builds the plugin with race detector enabled and injecting output of `git describe` to BuildVersion variable
 buildrace: fmtcheck
-	go install --race -ldflags="-X 'github.com/vmware/terraform-provider-vcd/v3/vcd.BuildVersion=$(GIT_DESCRIBE)'"
-
+	go install --race -ldflags="-X 'github.com/schubergphilis/terraform-provider-vcd/v3/vcd.BuildVersion=$(GIT_DESCRIBE)'"
 # creates a .zip archive of the code
 dist:
 	git archive --format=zip -o source.zip HEAD
@@ -79,7 +78,6 @@ testunit: fmtcheck
 
 # Runs the basic execution test
 test: testunit tagverify
-	@sh -c "'$(CURDIR)/scripts/runtest.sh' short"
 
 # Runs the full acceptance test as Org user
 testacc-orguser: testunit

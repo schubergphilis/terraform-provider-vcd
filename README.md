@@ -1,6 +1,11 @@
 Terraform VMware Cloud Director Provider
 ==================
 
+## IMPORTANT: Fork notice
+
+This is a fork of the VCD provider intended for usage at Schuberg Philis. The official provider seems to be no longer
+maintained. The aim of this fork is to add some missing functionalities to address the specific needs of Schuberg Philis. Use this fork at your own discretion and risk.
+
 The official Terraform provider for [VMware Cloud Director](https://www.vmware.com/products/cloud-director.html)
 
 - Documentation of the latest binary release available at https://registry.terraform.io/providers/vmware/vcd/latest/docs
