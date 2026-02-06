@@ -2,10 +2,10 @@
 name: CI
 
 on:
-  pull_request_target:
-    branches:
-      - 'main'
-      - 'release/**'
+  pull_request:
+
+permissions:
+  contents: write
 
 jobs:
   fmt:
@@ -44,6 +44,10 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set BUILDVERSION env var
+        id: buildversion
+        run: echo "BUILDVERSION=$(git describe --tags --always)" >> $GITHUB_ENV
+
       - name: Setup Go env
         uses: actions/setup-go@v5
         with:
@@ -60,8 +64,8 @@ jobs:
         uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
-          args: release --clean --skip=publish
+          args: release --clean --skip=publish --snapshot
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
-
+          BUILDVERSION: ${{ env.BUILDVERSION }}
