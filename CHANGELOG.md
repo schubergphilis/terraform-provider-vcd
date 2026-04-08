@@ -1,3 +1,9 @@
+## 3.16.0 (Unreleased)
+
+### IMPROVEMENTS
+* Resources `vcd_vapp_vm` and `vcd_vm` now automatically power off and power on VMs when changing placement
+  policy between `gen1-amd-nlcp*` and `NLCP*` policies to ensure proper policy application
+
 ## 3.14.1 (December 5, 2024)
 
 ### IMPROVEMENTS
