@@ -1854,6 +1854,64 @@ func resourceVmHotUpdate(d *schema.ResourceData, meta interface{}, vmType typeOf
 		// This is done because we need to update both policies at the same time, as not populating one of them will make
 		// that policy to be unassigned from the VM.
 		// Therefore, we need to use the old value if the policy didn't change to preserve it, or update to the new if it changed.
+
+		// Check if we need to power off VM for placement policy change BEFORE reassigning placementId
+		// This is only needed when switching between gen1-amd-nlcp* and NLCP* policies
+		needsPowerCycle := false
+		vmStatusBeforePolicyUpdate := ""
+		if placementPolicyChanged {
+			vcdClient := meta.(*VCDClient)
+			oldPolicyName := ""
+			newPolicyName := ""
+
+			// Get old placement policy name (placementId hasn't been reassigned yet)
+			oldPlacementId, newPlacementIdTemp := d.GetChange("placement_policy_id")
+			if oldPlacementId != nil && oldPlacementId.(string) != "" {
+				oldPolicy, err := vcdClient.GetVdcComputePolicyV2ById(oldPlacementId.(string))
+				if err == nil && oldPolicy != nil {
+					oldPolicyName = oldPolicy.VdcComputePolicyV2.Name
+				}
+			}
+
+			// Get new placement policy name
+			if newPlacementIdTemp != nil && newPlacementIdTemp.(string) != "" {
+				newPolicy, err := vcdClient.GetVdcComputePolicyV2ById(newPlacementIdTemp.(string))
+				if err == nil && newPolicy != nil {
+					newPolicyName = newPolicy.VdcComputePolicyV2.Name
+				}
+			}
+
+			// Check if we're switching between gen1-amd-nlcp* and NLCP* policies
+			oldIsGen1 := strings.HasPrefix(strings.ToLower(oldPolicyName), "gen1-amd-nlcp")
+			oldIsNLCP := strings.HasPrefix(strings.ToUpper(oldPolicyName), "NLCP")
+			newIsGen1 := strings.HasPrefix(strings.ToLower(newPolicyName), "gen1-amd-nlcp")
+			newIsNLCP := strings.HasPrefix(strings.ToUpper(newPolicyName), "NLCP")
+
+			// Need power cycle if switching from gen1-amd-nlcp* to NLCP* or vice versa
+			needsPowerCycle = (oldIsGen1 && newIsNLCP) || (oldIsNLCP && newIsGen1)
+
+			if needsPowerCycle {
+				log.Printf("[DEBUG] Placement policy change requires VM power cycle: %s -> %s", oldPolicyName, newPolicyName)
+				vmStatusBeforePolicyUpdate, err = vm.GetStatus()
+				if err != nil {
+					return diag.Errorf("error getting VM status before placement policy update: %s", err)
+				}
+
+				if vmStatusBeforePolicyUpdate != "POWERED_OFF" {
+					log.Printf("[DEBUG] Powering off VM %s for placement policy update. Previous state %s", vm.VM.Name, vmStatusBeforePolicyUpdate)
+					task, err := vm.Undeploy()
+					if err != nil {
+						return diag.Errorf("error triggering undeploy for VM %s before placement policy update: %s", vm.VM.Name, err)
+					}
+					err = task.WaitTaskCompletion()
+					if err != nil {
+						return diag.Errorf("error waiting for undeploy task for VM %s before placement policy update: %s", vm.VM.Name, err)
+					}
+				}
+			}
+		}
+
+		// Now reassign the IDs for the actual update
 		if placementPolicyChanged {
 			placementId = newPlacementId
 		}
@@ -1863,6 +1921,19 @@ func resourceVmHotUpdate(d *schema.ResourceData, meta interface{}, vmType typeOf
 		_, err = vm.UpdateComputePolicyV2(sizingId.(string), placementId.(string), "")
 		if err != nil {
 			return diag.Errorf("error updating compute policy: %s", err)
+		}
+
+		// If placement policy was changed and VM was powered on, power it back on
+		if needsPowerCycle && vmStatusBeforePolicyUpdate == "POWERED_ON" {
+			log.Printf("[DEBUG] Powering on VM %s after placement policy update", vm.VM.Name)
+			task, err := vm.PowerOn()
+			if err != nil {
+				return diag.Errorf("error powering on VM %s after placement policy update: %s", vm.VM.Name, err)
+			}
+			err = task.WaitTaskCompletion()
+			if err != nil {
+				return diag.Errorf("error waiting for power on task for VM %s after placement policy update: %s", vm.VM.Name, err)
+			}
 		}
 	}
 
