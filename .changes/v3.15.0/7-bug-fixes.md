@@ -1,0 +1,1 @@
+* `resource/vcd_vapp_vm` no longer re-runs the full `network_dhcp_wait_seconds` wait on every plain refresh/plan for DHCP NICs that already have a known IP from a previous apply; only a short confirmation check is done in that case [GH-7]
