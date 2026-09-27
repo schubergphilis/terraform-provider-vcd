@@ -1314,6 +1314,8 @@ func readNetworks(d *schema.ResourceData, vm govcd.VM, vapp govcd.VApp, vdc *gov
 			// confirmation check instead of the full wait, and fall back to the
 			// previously known IP if guest tools still doesn't report anything.
 			knownIps := previousDhcpNicIps(d, dhcpNicIndexes)
+			log.Printf("[DEBUG] [VM read] [DHCP IP Lookup] '%s' previously known IPs for NICs %v: %v",
+				vm.VM.Name, dhcpNicIndexes, knownIps)
 			waitSeconds := maxDhcpWaitSecondsInt
 			if allDhcpNicIpsKnown(dhcpNicIndexes, knownIps) && dhcpRefreshQuickCheckSeconds < waitSeconds {
 				waitSeconds = dhcpRefreshQuickCheckSeconds
