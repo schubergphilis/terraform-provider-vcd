@@ -957,6 +957,51 @@ func getVmNicIndexesWithDhcpEnabled(networkConnectionSection *types.NetworkConne
 	return nicIndexes
 }
 
+// dhcpRefreshQuickCheckSeconds bounds how long a plain Read (as opposed to a Create/Update) waits
+// for DHCP NICs that already have a known-good IP from a previous read. It only needs to be long
+// enough for a couple of WaitForDhcpIpByNicIndexes' 3-second poll ticks.
+const dhcpRefreshQuickCheckSeconds = 15
+
+// previousDhcpNicIps returns, keyed by NIC index, the "ip" value already present in the resource's
+// prior "network" state for each of the given DHCP NIC indexes. The "network" list is always
+// written by readNetworks in NIC index order, so a NIC's position in that prior state matches its
+// index here.
+func previousDhcpNicIps(d *schema.ResourceData, dhcpNicIndexes []int) map[int]string {
+	knownIps := make(map[int]string)
+	previousNetworks, ok := d.GetOk("network")
+	if !ok {
+		return knownIps
+	}
+	previousNetworksList, ok := previousNetworks.([]interface{})
+	if !ok {
+		return knownIps
+	}
+
+	for _, nicIndex := range dhcpNicIndexes {
+		if nicIndex < 0 || nicIndex >= len(previousNetworksList) {
+			continue
+		}
+		previousNic, ok := previousNetworksList[nicIndex].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if ip, ok := previousNic["ip"].(string); ok && ip != "" {
+			knownIps[nicIndex] = ip
+		}
+	}
+	return knownIps
+}
+
+// allDhcpNicIpsKnown reports whether every given NIC index has an entry in knownIps.
+func allDhcpNicIpsKnown(dhcpNicIndexes []int, knownIps map[int]string) bool {
+	for _, nicIndex := range dhcpNicIndexes {
+		if knownIps[nicIndex] == "" {
+			return false
+		}
+	}
+	return true
+}
+
 // getVmByName returns a VM by the given name if found unequivocally
 // If there are more than one instance by the wanted name, it also returns a list of
 // matching VMs with sample information (ID, guest OS, network name, IP address)
@@ -1259,19 +1304,36 @@ func readNetworks(d *schema.ResourceData, vm govcd.VM, vapp govcd.VApp, vdc *gov
 		}
 
 		if len(dhcpNicIndexes) > 0 { // at least one NIC uses DHCP for IP allocation mode
+			// A previous apply may already have recorded a working IP for these NICs. On
+			// NSX-T backed VDCs there is no DHCP lease API to fall back on (see
+			// useNsxvDhcpLeaseCheck below), so guest tools reporting is the only source of
+			// truth, and some guest OSes are slow - or never - to (re)populate it on a VM
+			// that is otherwise up and fine. Without this, every plain refresh/plan would
+			// re-run the full network_dhcp_wait_seconds wait for VMs that already have a
+			// known-good IP. If we have one for every DHCP NIC already, only do a short
+			// confirmation check instead of the full wait, and fall back to the
+			// previously known IP if guest tools still doesn't report anything.
+			knownIps := previousDhcpNicIps(d, dhcpNicIndexes)
+			log.Printf("[DEBUG] [VM read] [DHCP IP Lookup] '%s' previously known IPs for NICs %v: %v",
+				vm.VM.Name, dhcpNicIndexes, knownIps)
+			waitSeconds := maxDhcpWaitSecondsInt
+			if allDhcpNicIpsKnown(dhcpNicIndexes, knownIps) && dhcpRefreshQuickCheckSeconds < waitSeconds {
+				waitSeconds = dhcpRefreshQuickCheckSeconds
+			}
+
 			log.Printf("[DEBUG] [VM read] [DHCP IP Lookup] '%s' waiting for DHCP IPs up to '%d' seconds on NICs %v",
-				vm.VM.Name, maxDhcpWaitSeconds, dhcpNicIndexes)
+				vm.VM.Name, waitSeconds, dhcpNicIndexes)
 
 			start := time.Now()
 
 			// Only use DHCP lease check if it is NSX-V as NSX-T Edge Gateway does not expose it and errors on such query
 			useNsxvDhcpLeaseCheck := vdc.IsNsxv()
-			nicIps, timeout, err := vm.WaitForDhcpIpByNicIndexes(dhcpNicIndexes, maxDhcpWaitSecondsInt, useNsxvDhcpLeaseCheck)
+			nicIps, timeout, err := vm.WaitForDhcpIpByNicIndexes(dhcpNicIndexes, waitSeconds, useNsxvDhcpLeaseCheck)
 			if err != nil {
 				return nil, fmt.Errorf("unable to to look up DHCP IPs for VM NICs '%v': %s", dhcpNicIndexes, err)
 			}
 
-			if timeout {
+			if timeout && waitSeconds == maxDhcpWaitSecondsInt {
 				log.Printf("[DEBUG] [VM read] [DHCP IP Lookup] VM %s timed out waiting %d seconds "+
 					"to report DHCP IPs. You may want to increase 'network_dhcp_wait_seconds' or ensure "+
 					"your DHCP settings are correct.\n", vm.VM.Name, maxDhcpWaitSeconds)
@@ -1281,12 +1343,16 @@ func readNetworks(d *schema.ResourceData, vm govcd.VM, vapp govcd.VApp, vdc *gov
 			}
 
 			log.Printf("[DEBUG] [VM read] [DHCP IP Lookup] VM '%s' waiting for DHCP IPs took '%s' (of '%ds')",
-				vm.VM.Name, time.Since(start), maxDhcpWaitSeconds)
+				vm.VM.Name, time.Since(start), waitSeconds)
 
 			for sliceIndex, nicIndex := range dhcpNicIndexes {
+				ip := nicIps[sliceIndex]
+				if ip == "" {
+					ip = knownIps[nicIndex]
+				}
 				log.Printf("[DEBUG] [VM read] [DHCP IP Lookup] VM '%s' NIC %d reported IP %s",
-					vm.VM.Name, nicIndex, nicIps[sliceIndex])
-				nets[nicIndex]["ip"] = nicIps[sliceIndex]
+					vm.VM.Name, nicIndex, ip)
+				nets[nicIndex]["ip"] = ip
 			}
 		}
 	}
