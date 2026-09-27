@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
@@ -157,7 +158,7 @@ func resourceVcdNsxtDistributedFirewallRuleCreate(ctx context.Context, d *schema
 	if err != nil {
 		return diag.Errorf("[Distributed Firewall Rule create] error getting Distributed Firewall Rule type: %s", err)
 	}
-	_, singleRule, err := vdcGroup.CreateDistributedFirewallRule(d.Get("above_rule_id").(string), firewallRuleType)
+	singleRule, err := createDistributedFirewallRuleWithVerification(vdcGroup, d.Get("above_rule_id").(string), firewallRuleType)
 	if err != nil {
 		return diag.Errorf("[Distributed Firewall Rule create] error setting Distributed Firewall Rule: %s", err)
 	}
@@ -165,6 +166,85 @@ func resourceVcdNsxtDistributedFirewallRuleCreate(ctx context.Context, d *schema
 	d.SetId(singleRule.Rule.ID)
 
 	return resourceVcdNsxtDistributedFirewallRuleRead(ctx, d, meta)
+}
+
+// dfwRuleCreateVerifyAttempts bounds how many times createDistributedFirewallRuleWithVerification
+// retries after a lost update before giving up.
+const dfwRuleCreateVerifyAttempts = 5
+
+// createDistributedFirewallRuleWithVerification creates a Distributed Firewall Rule and then
+// confirms it actually landed in the requested position before returning.
+//
+// CreateDistributedFirewallRule works by reading the *entire* rule list for the VDC group, splicing
+// in the new rule, and writing the whole list back - there is no compare-and-swap on that endpoint
+// (see its own doc comment: "Running this function concurrently will corrupt firewall rules"). A VDC
+// group's DFW policy is commonly shared across several independent teams/pipelines, each with their
+// own Terraform run; the in-process 'lockParentVdcGroup' mutex only serializes goroutines within
+// this one provider process, so it cannot prevent a concurrent writer in another process from
+// reading a stale list at the same time and overwriting our just-added rule, silently dropping it or
+// leaving it below 'above_rule_id'. Detect that by re-reading the rule list after create and
+// retrying (from scratch, since the anchor may have moved) if our rule isn't where we asked for it.
+func createDistributedFirewallRuleWithVerification(vdcGroup *govcd.VdcGroup, aboveRuleId string, firewallRuleType *types.DistributedFirewallRule) (*govcd.DistributedFirewallRule, error) {
+	var lastErr error
+	for attempt := 1; attempt <= dfwRuleCreateVerifyAttempts; attempt++ {
+		_, singleRule, err := vdcGroup.CreateDistributedFirewallRule(aboveRuleId, firewallRuleType)
+		if err != nil {
+			return nil, err
+		}
+
+		inPosition, err := distributedFirewallRuleIsInExpectedPosition(vdcGroup, singleRule.Rule.ID, aboveRuleId)
+		if err != nil {
+			return nil, fmt.Errorf("error verifying position of newly created Distributed Firewall Rule: %s", err)
+		}
+		if inPosition {
+			return singleRule, nil
+		}
+
+		log.Printf("[DEBUG] [Distributed Firewall Rule create] rule '%s' was not found in its expected "+
+			"position after create (attempt %d/%d) - a concurrent writer likely overwrote the shared rule "+
+			"list. Removing it and retrying.", singleRule.Rule.ID, attempt, dfwRuleCreateVerifyAttempts)
+
+		// Clean up whatever landed in the wrong spot (if it still exists at all) before retrying, so
+		// retries don't accumulate duplicate/orphaned rules.
+		if existingRule, getErr := vdcGroup.GetDistributedFirewallRuleById(singleRule.Rule.ID); getErr == nil {
+			_ = existingRule.Delete()
+		}
+
+		lastErr = fmt.Errorf("rule was not in its expected position")
+		time.Sleep(time.Duration(attempt) * 2 * time.Second)
+	}
+
+	return nil, fmt.Errorf("gave up creating Distributed Firewall Rule in its expected position after %d attempts: %s",
+		dfwRuleCreateVerifyAttempts, lastErr)
+}
+
+// distributedFirewallRuleIsInExpectedPosition reports whether 'ruleId' is present in the VDC
+// Group's Distributed Firewall Rule list and, when 'aboveRuleId' is set, that it appears before it.
+func distributedFirewallRuleIsInExpectedPosition(vdcGroup *govcd.VdcGroup, ruleId, aboveRuleId string) (bool, error) {
+	dfw, err := vdcGroup.GetDistributedFirewall()
+	if err != nil {
+		return false, err
+	}
+
+	ruleIndex := -1
+	aboveRuleIndex := -1
+	for index, rule := range dfw.DistributedFirewallRuleContainer.Values {
+		if rule.ID == ruleId {
+			ruleIndex = index
+		}
+		if aboveRuleId != "" && rule.ID == aboveRuleId {
+			aboveRuleIndex = index
+		}
+	}
+
+	if ruleIndex == -1 {
+		return false, nil
+	}
+	if aboveRuleId != "" && (aboveRuleIndex == -1 || ruleIndex >= aboveRuleIndex) {
+		return false, nil
+	}
+
+	return true, nil
 }
 
 func resourceVcdNsxtDistributedFirewallRuleUpdate(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
